@@ -1,134 +1,77 @@
-# Smart Thermal Mapping For Urban Heat & Wildlife Monitoring
+# Smart Thermal Mapping for Urban Heat & Wildlife Monitoring
 
-## 🚀 Streamlit Cloud Deployment
+This repository contains an optical-guided thermal super-resolution workflow for improving low-resolution thermal satellite imagery and a Streamlit-based demo for interactive inference.
 
-The app is deployed on **Streamlit Cloud** using `streamlit_app.py` as the entrypoint.
+## Overview
 
-### Streamlit Cloud settings
-| Setting | Value |
-|---|---|
-| Repository | `VaibhaviCNBhat/Smart-Thermal-Mapping-For-Urban-Heat-Wildlife-Monitoring` |
-| Branch | `master` |
-| **Main file path** | **`streamlit_app.py`** |
-| Python version | `3.11` (set via `runtime.txt`) |
+The project combines:
+- a PyTorch model for thermal super-resolution,
+- preprocessing utilities for Landsat-style imagery,
+- a Streamlit interface for local exploration, and
+- a FastAPI backend for serving inference requests.
 
-> ⚠️ **Do not** set the main file to `backend_app.py` — that file starts a FastAPI/Uvicorn
-> server and is not a Streamlit entrypoint.
+The workflow is designed around the files and folders in this repository, including the preprocessing pipeline in the Pre processing directory, the model code, and the demo assets in the frontend folder.
 
-### Running locally
+## Project structure
+
+- streamlit_app.py: interactive Streamlit UI entrypoint
+- backend_app.py: FastAPI backend for local API deployment
+- inference_v2.py: batch inference script for generating example outputs
+- Pre processing/: preprocessing, dataloader, model, and training utilities
+- frontend/: static assets for the web UI
+- dataset_demo/ and dataset/: demo or full datasets used by the scripts
+- checkpoints/: pretrained model weights
+
+## Requirements
+
+The project targets Python 3.11 (as defined in runtime.txt) and relies on:
+- PyTorch for the model
+- NumPy and SciPy for numerical processing
+- Matplotlib and Pillow for visualization
+- Streamlit for the UI
+- FastAPI and Uvicorn for the backend API
+- Rasterio for geospatial file handling
+
+## Local setup
 
 ```bash
-# 1. Install dependencies
+python -m venv .venv
+source .venv/bin/activate
+# On Windows PowerShell use: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+```
 
-# 2. Start the Streamlit app
+## Running the app
+
+### Streamlit UI
+
+```bash
 streamlit run streamlit_app.py
+```
 
-# 3. (Optional) Also start the FastAPI backend on a separate port
+### FastAPI backend
+
+```bash
 uvicorn backend_app:app --host 0.0.0.0 --port 8000
 ```
 
----
+### Batch inference example
 
-# -Smart-Thermal-Mapping-For-Urban-Heat-Wildlife-Monitoring
-📌 Overview
-This project focuses on enhancing low-resolution thermal satellite imagery using high-resolution optical imagery as structural guidance. Thermal infrared (TIR) images provide accurate surface temperature measurements but suffer from limited spatial resolution. In contrast, optical images capture sharp spatial details but lack temperature information.
-We propose a dual-encoder, gated-fusion deep learning framework that improves thermal spatial resolution while preserving physical temperature fidelity.
+```bash
+python inference_v2.py
+```
 
-🎯 Problem Statement
-Thermal satellite imagery (e.g., Landsat 8 Band 10) has lower intrinsic resolution compared to optical bands. Traditional interpolation methods fail to reconstruct structural boundaries, while naïve fusion techniques may introduce artificial textures. The challenge is to enhance spatial detail without distorting thermal measurements.
+## Notes
 
-🏗️ Proposed Architecture
-The model follows a structured pipeline:
+- Use streamlit_app.py as the Streamlit entrypoint.
+- backend_app.py starts a FastAPI server and should not be used as the Streamlit main file.
+- If the full dataset is not present locally, the app will fall back to the demo dataset in dataset_demo/.
+- The pretrained checkpoint is expected at checkpoints/best_model.pth.
 
-1. Thermal Encoder
-Extracts temperature-specific features from upsampled low-resolution thermal input.
+## Typical workflow
 
-2. Optical Encoder
-Extracts high-frequency spatial details from optical imagery.
+1. Install dependencies with pip install -r requirements.txt.
+2. Start the Streamlit app for interactive exploration.
+3. Optionally start the FastAPI backend for API-based inference.
+4. Run inference_v2.py to generate sample outputs from the available dataset.
 
-3. Gated Fusion Module
-Regulates optical feature injection using thermal feature guidance to prevent texture hallucination.
-
-4. Reconstruction Decoder
-Generates the super-resolved thermal output.
-
-5. Physics-Aware Loss Functions
-L1 Reconstruction Loss
-SSIM Structural Loss
-Thermal Energy Consistency Constraint
-
-
-📊 Dataset
-We use Landsat 8 Collection 2 data:
-Optical Bands: B2, B3, B4 (RGB)
-Thermal Band: B10
-Thermal band values are converted from digital numbers to brightness temperature (Kelvin) using calibration constants from the metadata file.
-Cloud-contaminated and invalid patches are filtered prior to training.
-
-📂 Project Structure
-Smart-Thermal-Mapping-For-Urban-Heat-Wildlife-Monitoring/
-│
-├── data/               # Raw and processed satellite data
-├── src/                # Model, training, and utility scripts
-├── configs/            # Experiment configuration files
-├── outputs/            # Checkpoints and generated results
-├── demo/               # Live demo script
-├── requirements.txt
-└── README.md
-
-🚀 Installation
-git clone https://github.com/VaibhaviCNBhat/Smart-Thermal-Mapping-For-Urban-Heat-Wildlife-Monitoring.git
-cd Smart-Thermal-Mapping-For-Urban-Heat-Wildlife-Monitoring
-pip install -r requirements.txt
-
-Recommended:
-Python 3.9+
-PyTorch
-rasterio
-numpy
-matplotlib
-
-
-🧪 Training
-python src/training/train.py --config configs/default_config.yaml
-
-Checkpoints will be saved in:
-outputs/checkpoints/
-
-🔍 Inference & Visualization
-Run super-resolution on a sample scene:
-python src/inference/infer.py --input data/sample_demo/
-
-The script will generate:
-Super-resolved GeoTIFF (scientific output)
-Colorized PNG heatmap (presentation output)
-
-
-📈 Evaluation Metrics
-We evaluate performance using:
-PSNR (Peak Signal-to-Noise Ratio)
-SSIM (Structural Similarity Index)
-RMSE (Kelvin) for temperature accuracy
-
-
-🖼️ Demo Output
-During live demonstration, the system displays:
-Low-resolution thermal heatmap
-Super-resolved thermal heatmap
-Quantitative metric comparison
-Both images are displayed using identical temperature scales for fair visual comparison.
-
-
-🌍 Applications
-Urban Heat Island Analysis
-Wildfire Monitoring
-Climate Risk Mapping
-Environmental Planning
-Precision Agriculture
-
-
-⚠️ Limitations
-Performance depends on optical–thermal structural correlation.
-Cloud contamination reduces usable training data.
-Enhancement is bounded by physical sensor limitations.

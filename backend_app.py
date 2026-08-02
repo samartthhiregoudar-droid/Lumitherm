@@ -23,8 +23,11 @@ sys.path.append(str(pre_processing_path))
 try:
     from step4_dataloader import ThermalSRDataset
     from step5_model import OpticalGuidedThermalSR
+    from step1_preprocess import generate_cloud_mask, radiometric_calibration_thermal
+    from kalman_denoiser import KalmanTemporalDenoiser
 except ImportError as e:
     print(f"Error importing modules: {e}")
+
 
 # Configuration
 # Smart detection: Use full dataset if available locally, otherwise fallback to demo dataset (GitHub)
@@ -426,6 +429,139 @@ async def get_climate_risk(lat: float, lon: float, mean_temp_k: float = 300):
         "data_source": "Derived analysis from Landsat 8 thermal data"
     }
 
+def execute_full_workflow_pipeline(optical_hr_np: np.ndarray, thermal_lr_seq: np.ndarray):
+    """
+    Executes the 9-stage Architecture Workflow Pipeline:
+    1. Raw Landsat Time Series
+    2. Cloud Masking
+    3. Radiometric Calibration
+    4. Kalman Temporal Denoising
+    5. Normalization
+    6. Dual-Encoder Gated Fusion SR Network
+    7. Kelvin Conversion
+    8. Heat Island Detection
+    9. Wildlife Monitoring
+    """
+    # Stage 1: Raw Landsat Time Series Ingestion
+    seq = np.asarray(thermal_lr_seq, dtype=np.float32)
+    if seq.ndim == 2:
+        seq = seq[np.newaxis, ...]  # (1, H, W)
+    T, H_lr, W_lr = seq.shape
+
+    # Stage 2: Cloud Masking
+    cloud_masks = []
+    for t in range(T):
+        c_mask = generate_cloud_mask(optical_hr_np, seq[t])
+        cloud_masks.append(c_mask)
+    cloud_masks = np.stack(cloud_masks, axis=0)  # (T, H_lr, W_lr)
+
+    # Stage 3: Radiometric Calibration (Convert raw DN -> Brightness Temperature Kelvin)
+    calibrated_seq = []
+    for t in range(T):
+        cal_k = radiometric_calibration_thermal(seq[t])
+        calibrated_seq.append(cal_k)
+    calibrated_seq = np.stack(calibrated_seq, axis=0)  # (T, H_lr, W_lr)
+
+    # Stage 4: Kalman Temporal Denoising
+    kalman_filter = KalmanTemporalDenoiser(process_variance=1e-4, measurement_variance=1e-2)
+    denoised_seq = kalman_filter.filter_sequence(calibrated_seq, cloud_masks)
+    
+    # Extract target denoised frame (most recent frame t = -1)
+    target_denoised_lr = denoised_seq[-1]
+
+    # Stage 5: Z-Score Normalization
+    th_mean = dataset_stats.get('thermal_mean', 128.0) if dataset_stats else 128.0
+    th_std = dataset_stats.get('thermal_std', 30.0) if dataset_stats else 30.0
+    opt_mean = dataset_stats.get('optical_mean', np.array([128.0, 128.0, 128.0])) if dataset_stats else np.array([128.0, 128.0, 128.0])
+    opt_std = dataset_stats.get('optical_std', np.array([50.0, 50.0, 50.0])) if dataset_stats else np.array([50.0, 50.0, 50.0])
+
+    norm_opt = (optical_hr_np - opt_mean.reshape(1, 1, 3)) / (opt_std.reshape(1, 1, 3) + 1e-8)
+    norm_opt = np.transpose(norm_opt, (2, 0, 1))  # (3, H, W)
+    norm_th_lr = (target_denoised_lr - th_mean) / (th_std + 1e-8)
+
+    opt_tensor = torch.from_numpy(norm_opt).unsqueeze(0).float().to(DEVICE)  # (1, 3, 256, 256)
+    th_tensor = torch.from_numpy(norm_th_lr).unsqueeze(0).unsqueeze(0).float().to(DEVICE)  # (1, 1, 64, 64)
+
+    # Stage 6: Dual-Encoder Gated Fusion SR Network
+    with torch.no_grad():
+        predicted_sr_tensor = model(opt_tensor, th_tensor)
+    sr_norm = predicted_sr_tensor.squeeze().cpu().numpy()
+
+    # Stage 7: Kelvin Conversion
+    sr_dn = sr_norm * th_std + th_mean
+    sr_kelvin = dn_to_kelvin(sr_dn)
+    sr_celsius = sr_kelvin - 273.15
+
+    # Stage 8: Heat Island Detection
+    mean_temp_k = float(sr_kelvin.mean())
+    max_temp_k = float(sr_kelvin.max())
+    min_temp_k = float(sr_kelvin.min())
+    hotspot_mask = (sr_kelvin > (mean_temp_k + 1.5 * np.std(sr_kelvin))).astype(np.uint8)
+    hotspot_percentage = round(float((hotspot_mask.sum() / hotspot_mask.size) * 100), 2)
+    uhi_intensity = round(max(0.0, (mean_temp_k - 295.0) * 0.5), 2)
+
+    # Stage 9: Wildlife Monitoring
+    heat_stress = "Critical" if mean_temp_k > 310 else ("High" if mean_temp_k > 305 else ("Moderate" if mean_temp_k > 300 else "Low"))
+    habitat_suitability = round(max(0.0, min(100.0, 100.0 - abs(mean_temp_k - 295.15) * 4.0)), 1)
+    ecological_threat_level = "Severe" if mean_temp_k > 312 else ("Elevated" if mean_temp_k > 305 else "Normal")
+
+    return {
+        "pipeline_stages": [
+            "1. Raw Landsat Time Series",
+            "2. Cloud Masking",
+            "3. Radiometric Calibration",
+            "4. Kalman Temporal Denoising",
+            "5. Normalization",
+            "6. Dual-Encoder Gated Fusion SR Network",
+            "7. Kelvin Conversion",
+            "8. Heat Island Detection",
+            "9. Wildlife Monitoring"
+        ],
+        "temporal_frames_count": T,
+        "cloud_coverage_percentage": round(float((1.0 - cloud_masks[-1].mean()) * 100), 2),
+        "temperature_stats": {
+            "mean_kelvin": round(mean_temp_k, 2),
+            "min_kelvin": round(min_temp_k, 2),
+            "max_kelvin": round(max_temp_k, 2),
+            "mean_celsius": round(mean_temp_k - 273.15, 2)
+        },
+        "heat_island_analysis": {
+            "uhi_intensity_k": uhi_intensity,
+            "hotspot_coverage_percent": hotspot_percentage,
+            "uhi_risk_level": "High" if uhi_intensity > 4.0 else ("Moderate" if uhi_intensity > 2.0 else "Low")
+        },
+        "wildlife_monitoring": {
+            "heat_stress_index": heat_stress,
+            "habitat_suitability_score": habitat_suitability,
+            "ecological_threat_level": ecological_threat_level
+        },
+        "prediction_map_base64": array_to_base64(sr_kelvin, cmap='inferno')
+    }
+
+@app.get("/api/pipeline/process_sequence")
+async def get_pipeline_process_sequence():
+    """Execute full 9-stage pipeline on a sample sequence."""
+    if not test_dataset:
+        return JSONResponse(status_code=500, content={"error": "Dataset not loaded"})
+    
+    idx = np.random.randint(0, len(test_dataset))
+    sample = test_dataset[idx]
+    
+    opt_hr = sample['optical_hr'].permute(1, 2, 0).numpy() # (256, 256, 3)
+    th_lr = sample['thermal_lr'].squeeze().numpy()         # (64, 64)
+    
+    # Create temporal sequence (T=3 synthetic time steps with noise for demonstration)
+    seq = np.stack([
+        th_lr * (1.0 + np.random.normal(0, 0.02, th_lr.shape)),
+        th_lr * (1.0 + np.random.normal(0, 0.01, th_lr.shape)),
+        th_lr
+    ], axis=0)
+    
+    result = execute_full_workflow_pipeline(opt_hr, seq)
+    result["scene_name"] = sample.get("scene_name", f"sample_{idx}")
+    return result
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

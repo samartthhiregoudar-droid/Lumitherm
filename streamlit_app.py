@@ -415,8 +415,27 @@ def main():
     # Sidebar
     st.sidebar.title("🌡️ Smart Thermal Mapping")
     st.sidebar.markdown(
-        "Optical-guided thermal super-resolution using Landsat-8 imagery.\n\n"
-        "Powered by a gated-fusion deep-learning model."
+        "**9-Stage Processing Architecture:**\n"
+        "1. 📡 Raw Landsat Time Series\n"
+        "2. ☁️ Cloud Masking\n"
+        "3. ⚡ Radiometric Calibration\n"
+        "4. 📉 Kalman Temporal Denoising\n"
+        "5. 📐 Normalization\n"
+        "6. 🧬 Dual-Encoder Gated Fusion SR\n"
+        "7. 🌡️ Kelvin Conversion\n"
+        "8. 🏙️ Heat Island Detection\n"
+        "9. 🌿 Wildlife Monitoring\n"
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("⚙️ Pipeline Configuration")
+    enable_cloud_mask = st.sidebar.checkbox("Enable Cloud Masking", value=True)
+    enable_kalman = st.sidebar.checkbox("Enable Kalman Filtering", value=True)
+    kalman_process_noise = st.sidebar.select_slider(
+        "Kalman Process Variance (Q)",
+        options=[1e-5, 1e-4, 1e-3, 1e-2],
+        value=1e-4,
+        format_func=lambda x: f"{x:.1e}"
     )
 
     mode = st.sidebar.radio(
@@ -430,6 +449,7 @@ def main():
         "**Backend API** (optional)\n\n"
         "Run `uvicorn backend_app:app --port 8000` locally to also expose the REST API."
     )
+
 
     # Load shared resources
     model = load_model()

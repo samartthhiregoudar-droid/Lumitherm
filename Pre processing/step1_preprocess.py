@@ -1,9 +1,9 @@
 import os
 import glob
 import numpy as np
-import rasterio
 from PIL import Image
 from scipy.ndimage import zoom
+
 
 # === CONFIGURATION ===
 DATASET_ROOT = r"C:\Users\Admin\Downloads\ssl4eo_l_oli_tirs_toa_benchmark"
@@ -41,15 +41,79 @@ def normalize_for_preview(arr, percentile_low=2, percentile_high=98):
     return ((arr - low) / (high - low) * 255.0).astype(np.uint8)
 
 
+# Landsat-8 TIRS Band 10 Calibration Constants (Default USGS Values)
+RADIANCE_MULT_B10 = 3.3420e-4
+RADIANCE_ADD_B10 = 0.1
+K1_CONSTANT_B10 = 774.8853
+K2_CONSTANT_B10 = 1321.0789
+
+def radiometric_calibration_thermal(thermal_dn, mult=RADIANCE_MULT_B10, add=RADIANCE_ADD_B10, k1=K1_CONSTANT_B10, k2=K2_CONSTANT_B10):
+    """
+    Convert Raw Landsat 8 TIRS Band 10 Digital Numbers (DN) to
+    Top-Of-Atmosphere (TOA) Spectral Radiance and Brightness Temperature (Kelvin).
+    """
+    dn = np.asarray(thermal_dn, dtype=np.float32)
+    # Radiance (W / (m^2 * srm * um))
+    radiance = mult * dn + add
+    radiance = np.maximum(radiance, 1e-5)  # avoid log(0) or division by zero
+    
+    # Brightness Temperature in Kelvin
+    temperature_k = k2 / np.log((k1 / radiance) + 1.0)
+    return temperature_k
+
+def generate_cloud_mask(optical, thermal, qa_band=None):
+    """
+    Generate cloud mask (1 = Clear land/water, 0 = Cloud/Shadow/Invalid).
+    Uses QA band if available, else spectral reflectance & thermal thresholding.
+    """
+    if qa_band is not None:
+        cloud_bit = (qa_band & (1 << 3)) != 0
+        shadow_bit = (qa_band & (1 << 4)) != 0
+        valid_mask = ~(cloud_bit | shadow_bit)
+        return valid_mask.astype(np.uint8)
+
+    opt = np.asarray(optical, dtype=np.float32)
+    th = np.asarray(thermal, dtype=np.float32)
+
+    # Determine channel axis for optical
+    if opt.ndim == 3:
+        if opt.shape[0] == 3:  # (3, H, W)
+            brightness = np.mean(opt, axis=0)
+        else:  # (H, W, 3)
+            brightness = np.mean(opt, axis=-1)
+    else:
+        brightness = opt
+
+    # Normalize brightness to [0, 1]
+    b_max = brightness.max() if brightness.max() > 0 else 1.0
+    brightness = brightness / b_max
+
+    # Align spatial dimensions if needed
+    if brightness.shape != th.shape:
+        factors = (th.shape[0] / brightness.shape[0], th.shape[1] / brightness.shape[1])
+        brightness = zoom(brightness, factors, order=1)
+
+    th_min, th_max = th.min(), th.max()
+    th_norm = (th - th_min) / ((th_max - th_min) + 1e-8)
+
+    # Cloud condition: high optical brightness & low thermal temperature
+    is_cloud = (brightness > 0.70) & (th_norm < 0.30)
+    valid_mask = (~is_cloud).astype(np.uint8)
+    return valid_mask
+
+
 def create_lr_thermal(hr_thermal, scale_factor):
     """Downsample HR thermal using bicubic interpolation."""
     lr = zoom(hr_thermal, 1.0 / scale_factor, order=3)  # order=3 = bicubic
     return lr
 
 
+
 def process_scene(tif_path, output_dir):
     """Process one GeoTIFF into optical_hr, thermal_hr, thermal_lr."""
+    import rasterio
     with rasterio.open(tif_path) as src:
+
         if src.count < THERMAL_BAND:
             return False, "Not enough bands"
 

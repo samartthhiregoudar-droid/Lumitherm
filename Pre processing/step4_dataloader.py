@@ -16,6 +16,7 @@ class ThermalSRDataset(Dataset):
 
     def __init__(self, dataset_root, split="train", scale_factor=4):
         self.dataset_root = dataset_root
+        self.split = split
         self.scale_factor = scale_factor
 
         # Load scene list
@@ -52,6 +53,32 @@ class ThermalSRDataset(Dataset):
         optical_hr = np.load(os.path.join(scene_dir, "optical_hr.npy"))   # (256, 256, 3)
         thermal_hr = np.load(os.path.join(scene_dir, "thermal_hr.npy"))   # (256, 256)
         thermal_lr = np.load(os.path.join(scene_dir, "thermal_lr.npy"))   # (64, 64)
+
+        # Synchronized Data Augmentation (applied only during training)
+        if self.split == "train":
+            # Random Horizontal Flip
+            if np.random.rand() > 0.5:
+                optical_hr = np.fliplr(optical_hr)
+                thermal_hr = np.fliplr(thermal_hr)
+                thermal_lr = np.fliplr(thermal_lr)
+
+            # Random Vertical Flip
+            if np.random.rand() > 0.5:
+                optical_hr = np.flipud(optical_hr)
+                thermal_hr = np.flipud(thermal_hr)
+                thermal_lr = np.flipud(thermal_lr)
+
+            # Random 90-degree Rotation
+            k = np.random.randint(0, 4)
+            if k > 0:
+                optical_hr = np.rot90(optical_hr, k, axes=(0, 1))
+                thermal_hr = np.rot90(thermal_hr, k, axes=(0, 1))
+                thermal_lr = np.rot90(thermal_lr, k, axes=(0, 1))
+
+            # Ensure contiguous array memory layout for PyTorch tensor conversion
+            optical_hr = np.ascontiguousarray(optical_hr)
+            thermal_hr = np.ascontiguousarray(thermal_hr)
+            thermal_lr = np.ascontiguousarray(thermal_lr)
 
         # Normalize
         optical_hr = self.normalize_optical(optical_hr)       # (3, 256, 256)

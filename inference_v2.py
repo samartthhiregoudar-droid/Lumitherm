@@ -13,16 +13,26 @@ sys.path.append(pre_processing_path)
 try:
     from step4_dataloader import ThermalSRDataset
     from step5_model import OpticalGuidedThermalSR
+    from step1_preprocess import generate_cloud_mask, radiometric_calibration_thermal
+    from kalman_denoiser import KalmanTemporalDenoiser
 except ImportError as e:
     print(f"Error importing modules: {e}")
-    print(f"Make sure 'Pre processing' folder exists and contains step4_dataloader.py and step5_model.py")
+    print(f"Make sure 'Pre processing' folder exists and contains step4_dataloader.py, step5_model.py, and kalman_denoiser.py")
     sys.exit(1)
 
+
 # Configuration
-DATASET_ROOT = os.path.join(os.getcwd(), 'dataset')
+if os.path.exists(os.path.join(os.getcwd(), 'dataset')):
+    DATASET_ROOT = os.path.join(os.getcwd(), 'dataset')
+elif os.path.exists(os.path.join(os.getcwd(), 'dataset_demo')):
+    DATASET_ROOT = os.path.join(os.getcwd(), 'dataset_demo')
+else:
+    DATASET_ROOT = os.path.join(os.getcwd(), 'dataset')
+
 CHECKPOINT_PATH = os.path.join(os.getcwd(), 'checkpoints', 'best_model.pth')
 OUTPUT_DIR = os.path.join(os.getcwd(), 'inference_results_grayscale')
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 # Ensure output directory exists
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -98,14 +108,23 @@ def main():
             scene_name = sample.get('scene_name', f'sample_{idx}')
             print(f"Processing {i+1}/{num_samples}: {scene_name}")
             
-            # Prepare inputs
-            # Add batch dimension (1, C, H, W)
-            optical_hr = sample['optical_hr'].unsqueeze(0).to(DEVICE) # (1, 3, 256, 256)
-            thermal_lr = sample['thermal_lr'].unsqueeze(0).to(DEVICE) # (1, 1, 64, 64)
-            thermal_hr = sample['thermal_hr'].unsqueeze(0).to(DEVICE) # (1, 1, 256, 256)
+            # Stage 1-4: Raw Landsat Time Series -> Cloud Masking -> Radiometric Calibration -> Kalman Filtering
+            kalman = KalmanTemporalDenoiser(process_variance=1e-4, measurement_variance=1e-2)
+            th_lr_np = sample['thermal_lr'].squeeze().numpy()
+            opt_hr_np = sample['optical_hr'].permute(1, 2, 0).numpy()
             
+            c_mask = generate_cloud_mask(opt_hr_np, th_lr_np)
+            cal_k = radiometric_calibration_thermal(th_lr_np)
+            denoised_lr = kalman.filter_single_frame(cal_k, c_mask)
+
+            optical_hr = sample['optical_hr'].unsqueeze(0).to(DEVICE)
+            thermal_lr = sample['thermal_lr'].unsqueeze(0).to(DEVICE)
+            thermal_hr = sample['thermal_hr'].unsqueeze(0).to(DEVICE)
+
             with torch.no_grad():
                 predicted_sr = model(optical_hr, thermal_lr)
+
+
             
             # Post-process for visualization
             
