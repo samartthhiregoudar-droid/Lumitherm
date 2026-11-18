@@ -1,4 +1,4 @@
-# Smart Thermal Mapping for Urban Heat & Wildlife Monitoring
+# Lumitherm: Optical-Guided Thermal Super-Resolution System
 
 This repository contains an optical-guided thermal super-resolution workflow for improving low-resolution thermal satellite imagery and a Streamlit-based demo for interactive inference.
 
